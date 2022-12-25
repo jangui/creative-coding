@@ -1,164 +1,266 @@
 let width;
 let height;
-let branches;
-let newNodes;
+let hyphae;
 let wobbleFactor;
 let nodeShrinkFactor;
 let nodeStartSize;
 let branchAttempts;
-let newBranchDecreaseFactor;
+let newBranchShrinkFactor;
+let colorChangeFactor;
+let minNodeSize;
+
+class Hypha {
+  newNodes;
+  branches;
+
+  constructor(radius, center, startingBranchCount, color) {
+    this.radius = radius;
+    this.center = center;
+    this.boundary = [radius, center];
+    this.branches = [];
+    this.newNodes = [];
+    this.initializeBranches(startingBranchCount, color);
+  }
+
+  initializeBranches(startingBranchCount, color) {
+  // create initial branches
+  for (let i = 0; i < startingBranchCount; i++) {
+    let velocity = createVector(random(-1, 1), random(-1, 1));
+    velocity.setMag(nodeStartSize);
+    let x = int(random(this.center.x-this.radius, this.center.x+this.radius));
+    let y = int(random(this.center.y-this.radius, this.center.y+this.radius));
+    let position = createVector(x, y);
+    let startNode = new Node(position, velocity, nodeStartSize, color)
+    this.branches.push(new Branch(i, startNode, this.newNodes));
+  }
+ }
+
+  draw() {
+    this.newNodes.forEach(node => {
+      node.draw();
+    });
+    this.newNodes = [];
+  }
+
+  grow() {
+    // grow each branch
+    this.branches.forEach(branch => {
+      let newNode = branch.grow(this.boundary, this.branches);
+      if (newNode) { this.newNodes.push(newNode); }
+    });
+
+    // grow new branches
+    for (let i = 0; i < branchAttempts; ++i) {
+      let branchIndex = int(random(0, this.branches.length));
+      let newBranch = this.branches[branchIndex].branch(this.boundary, this.branches);
+      if (newBranch) {
+        this.branches.push(newBranch);
+        this.newNodes.push(newBranch.nodes[0]);
+      }
+    }
+  }
+}
 
 class Branch {
   id;
   nodes;
 
   constructor(id, startNode) {
+    this.id = id;
     this.nodes = [startNode];
-    newNodes.push(startNode);
   }
-  grow() {
+
+  grow(boundary, branches) {
+    // get tail node
     let lastNode = this.nodes[this.nodes.length-1];
-    let newNode = this.growNode(lastNode);
-    if (!this.checkCollisions(newNode)) {
-      newNodes.push(newNode);
-      this.nodes.push(newNode);
-    }
-  }
-
-  growNode(node) {
-    // new node direction
-    let updateX = random(-wobbleFactor, wobbleFactor);
-    let updateY = random(-wobbleFactor, wobbleFactor);
-    let direction = [node.direction[0]+updateX, node.direction[1]+updateY];
-
-    // new node position
-    let velocity = [0,0];
-    let magnitude = sqrt(direction[0]**2 + direction[1]**2);
-    if (magnitude === 0) { return; }
-    velocity[0] = 2 * direction[0] / magnitude;
-    velocity[1] = 2 * direction[1]/ magnitude;
-    let position = [node.x + velocity[0], node.y + velocity[1]];
+    if (lastNode.size <= minNodeSize) { return; }
 
     // create new node
-    let size = node.size - nodeShrinkFactor;
-    let color = node.color;
-    color[2] += 0.0025;
-    return new Node(position[0], position[1], direction, size, color);
+    let newNode = this.growNode(lastNode, false);
+    if (!newNode) { return; }
+
+    // check collisions
+    if (this.checkCollisions(newNode, boundary, branches)) { return; }
+
+    // add node
+    this.nodes.push(newNode);
+    return newNode;
+  }
+
+  growNode(parentNode, branchNode) {
+    // modify direction
+    let rotationRadians = random(-wobbleFactor, wobbleFactor);
+    let newVelocity = p5.Vector.rotate(parentNode.velocity, rotationRadians);
+
+    // set new branch velocity perpendicular-ish from old branch
+    if (branchNode) {
+      let negativeXVelocity = -newVelocity.x;
+      newVelocity.x = newVelocity.y;
+      newVelocity.y = negativeXVelocity;
+      newVelocity = p5.Vector.mult(newVelocity, random([-1,1]));
+    }
+
+    // update velocity magnitude
+    newVelocity.setMag(parentNode.size);
+
+    // set position, size & color
+    let newPosition = p5.Vector.add(parentNode.position, newVelocity);
+    let size = parentNode.size - nodeShrinkFactor;
+    let color = [parentNode.color[0], parentNode.color[1], parentNode.color[2]];
+    if (color[2] < 88) { color[2] += colorChangeFactor; }
+    return new Node(newPosition, newVelocity, size, color);
   }
 
   // create a new branch
-  branch() {
+  branch(boundary, branches) {
+    if (branches.length >= 2000) { return; }
     // select random node
     let node = random(this.nodes);
+    if (node.size <= minNodeSize) { return; }
 
     // create new node
-    let newNode = this.growNode(node);
+    let newNode = this.growNode(node, true, true);
+    if (!newNode) { return; }
 
     // check collisions
-    let collision = this.checkCollisions(newNode);
-    if (!collision) {
-      newNodes.push(newNode);
-      newNode.size = node.size * newBranchDecreaseFactor;
-      // create new branch
-      let id = branches[branches.length-1].id + 1;
-      let branch = new Branch(id, newNode);
-      branches.push(branch);
+    let collision = this.checkCollisions(newNode, boundary, true);
+    if (collision) { return; }
+
+    // modify new branch size
+    newNode.size = node.size - newBranchShrinkFactor;
+
+    // create new branch
+    let id = branches[branches.length-1].id + 1;
+    return new Branch(id, newNode);
+}
+
+// returns true if collision
+  checkCollisions(node, boundary, branches) {
+    // check boundary collisions
+    if (this.checkBoundaryCollisions(node, boundary)) { return true; }
+
+    // check collisions against nodes from other branches
+    if (this.checkBranchCollisions(node, branches)) { return true; }
+
+    return false;
+  }
+
+  checkBranchCollisions(node, branches) {
+    for (let i = 0; i < branches.length; i++) {
+      let branch = branches[i];
+      for (let j = 0; j < branch.nodes.length; j++) {
+        let otherNode = branch.nodes[j];
+        // check if node colliding
+        if (node.isColliding(otherNode)) {return true;}
+        /*
+        // check if will collide given same trajectory
+        let futureTrajectory = new Node(node.position, node.velocity, node.size, node.color);
+        futureTrajectory.position = p5.Vector.add(futureTrajectory.position, futureTrajectory.velocity);
+        if (futureTrajectory.isColliding(otherNode)) {return true;}
+        */
+
+      }
     }
   }
 
-  // returns true if collision
-  checkCollisions(node) {
-    // check boundary collisions
-    if (node.x >= width - node.size || node.x <= node.size) {
-      return true;
-    }
-    if (node.y >= height - node.size || node.y <= node.size) {
-      return true;
-    }
+  checkBoundaryCollisions(node, boundary) {
+    let radius = boundary[0];
+    let center = boundary[1];
 
-    // check collisions against nodes from other stems
-    for (let i = 0; i < branches.length; i++) {
-      let tailNodes = 0
-      if (branches[i].id === this.id) { tailNodes = 12; }
-      let branch = branches[i];
-      for (let j = 0; j < branch.nodes.length - tailNodes; j++) {
-        let otherNode = branch.nodes[j];
-        if (node.isColliding(otherNode)) {
-          return true;
-        }
-      }
+    let distance = (node.position.x - center.x)**2 + (node.position.y - center.y)**2;
+    if (distance >= radius**2) { return true; }
+
+    /*
+    if (node.position.x >= width - node.size || node.position.x <= node.size) {
+      return true;
     }
-    return false;
+    if (node.position.y >= height - node.size || node.position.y <= node.size) {
+      return true;
+    }
+    */
   }
 }
 
 class Node {
-  x;
-  y;
-  direction;
+  position;
+  velocity;
   size;
   color;
 
-  constructor(x, y, direction, size, color) {
-    this.x = x;
-    this.y = y;
-    this.color = color;
+  constructor(position, velocity, size, color) {
+    this.position = position;
+    this.velocity = velocity;
     this.size = size;
-    this.direction = direction;
+    this.color = color;
   }
 
   draw() {
-    colorMode(HSL, 100)
+    colorMode(HSL, 100);
     stroke(this.color[0], this.color[1], this.color[2]);
-    strokeWeight(this.size);
-    point(this.x, this.y);
+    strokeWeight(this.size*1.75);
+    point(this.position.x, this.position.y);
   }
 
   isColliding(otherNode) {
-    return ((otherNode.x-this.x)**2 + (otherNode.y-this.y)**2) < ((otherNode.size/2 + this.size)**2);
+    let radiusDifference = (otherNode.size/2 + this.size/2) ** 2;
+    let sqrtDistance = (otherNode.position.x-this.position.x) ** 2 + (otherNode.position.y-this.position.y) ** 2;
+    return sqrtDistance < radiusDifference;
   }
 }
 
 // p5 setup function
 function setup() {
-  width = 400;
-  height = 400;
+
+  width = 1300;
+  height = 730;
   createCanvas(width, height);
 
-  wobbleFactor = 5;
-  nodeShrinkFactor = 0.01;
-  nodeStartSize = 8;
-  newNodes = [];
-  branchAttempts = 10;
-  newBranchDecreaseFactor = 0.8;
+  wobbleFactor = radians(15);
+  nodeShrinkFactor = 0.035;
+  newBranchShrinkFactor = 0.2;
+  colorChangeFactor = 0.001;
+  nodeStartSize = 2.75;
+  minNodeSize = 0.1;
+  branchAttempts = 1;
+  hyphae = [];
 
-  let startingBranchCount = 6;
-  branches = [];
-  for (let i = 0; i < startingBranchCount; i++) {
-    let startDirection = [random(), random()];
-    let x = int(random(width/4, 3*width/4));
-    let y = int(random(height/4, 3*height/4));
-    let color = [int(random(50,60)),60, 70]
-    let startNode = new Node(x, y, startDirection, nodeStartSize, color)
-    branches.push(new Branch(i, startNode));
+  let radius = 100;
+  let spacingX = 15;
+  let spacingY = 60;
+  let startingBranchCount = 30;
+  let rows = 3;
+  let cols = 6;
+  for (let i = 0; i < cols; ++i) {
+    for (let j = 0; j < rows; ++j) {
+      let x = i*(radius*2+spacingX) + radius;
+      let y = j*(radius*2+spacingY) + radius;
+      if (j===0) { y+=10}
+      if (i===0) { x+=10}
+      let center = createVector(x, y);
+      let hue = int(map(i, 0, cols, 10, 90));
+      let saturation = int(map(j, 0, rows, 20, 90));
+      let color = [hue, saturation, 70];
+      let hypha = new Hypha(radius, center, startingBranchCount, color);
+      hyphae.push(hypha);
+    }
   }
+
+
   // draw background
-  background(220);
+  background(255);
 }
 
 // p5 draw function
 function draw() {
-  newNodes.forEach( node => {
-    node.draw();
-  });
-  newNodes = [];
+  hyphae.forEach(hypha => {
+    hypha.draw();
+    hypha.grow();
+  })
+}
 
-  branches.forEach( branch => {
-    branch.grow();
-  });
-
-  for (let i = 0; i < branchAttempts; ++i) {
-    let branchIndex = int(random(0, branches.length));
-    branches[branchIndex].branch();
-  }
+function mousePressed() {
+  noLoop();
+  hyphae.forEach(hypha => {
+    console.log(hypha.branches.length)
+  })
 }
