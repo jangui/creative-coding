@@ -1,8 +1,8 @@
 {
   "dependencies": {
-    "canvas-sketch": "^0.7.5",
-    "canvas-sketch-cli": "^1.11.15",
-    "canvas-sketch-util": "^1.10.0",
-    "tweakpane": "^3.0.8"
+    "browser-sync": "^2.27.10"
+  },
+  "scripts": {
+      "start": "npx browser-sync start --server -f -w"
   }
 }
