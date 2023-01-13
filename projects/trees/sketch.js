@@ -1,54 +1,150 @@
-let width;
-let height;
-let nodes;
-let newNodes;
+let tree;
+
+class Tree {
+  minNodeSize = 1;
+  nodeSizeDecrease = 0.035;
+  shadowIntensity = 10;
+  leftShadowFactor = 0.15;
+  rightShadowFactor = 0.8;
+  newNodes = [];
+
+  treeWobbleAngle = radians(3);
+
+  branchProbability = 0.0075;
+  minBranchAngle = radians(20);
+  maxBranchAngle = radians(60);
+  minBranchingSizeFactor = 0.3;
+  maxBranchingSizeFactor = 0.8;
+
+  constructor(startingSize, position, maxWidth, maxHeight, color, background) {
+    this.maxWidth = maxWidth;
+    this.maxHeight = maxHeight;
+    this.color = color;
+    this.background = background;
+    let velocity = createVector(0,-0.5); // trees start growing vertically
+    this.newNodes.push(new Node(startingSize, position, velocity));
+
+
+  }
+
+  grow() {
+    let grownNodes = []
+    this.newNodes.forEach(node => {
+      // grow current branch
+      let grownNode = this.growNode(node);
+      if (grownNode) { grownNodes.push(grownNode); }
+
+      // attempt new branch
+      grownNode = this.branch(node);
+      if (grownNode) { grownNodes.push(grownNode); }
+    });
+    this.newNodes = grownNodes;
+  }
+
+  growNode(parentNode) {
+    if (parentNode.size < this.minNodeSize) { return; }
+
+    // decrease size for new node
+    let newSize = parentNode.size - this.nodeSizeDecrease;
+
+    // calc position for new node
+    let newPosition = p5.Vector.add(parentNode.position, parentNode.velocity);
+    if (this.checkCollisions(newPosition)) { return; }
+
+    // slightly alter new node's direction
+    let rotationRadians = random(-this.treeWobbleAngle, this.treeWobbleAngle);
+    let newVelocity = p5.Vector.rotate(parentNode.velocity, rotationRadians);
+
+    return new Node(newSize, newPosition, newVelocity);
+  }
+
+  branch(parentNode) {
+    if (random() > this.branchProbability) { return; }
+
+    // branch size
+    let minSize = parentNode.size * this.minBranchingSizeFactor;
+    let maxSize = parentNode.size * this.maxBranchingSizeFactor;
+    let newSize = random(minSize, maxSize);
+
+    // branch direction
+    let posOrNeg = random() < 0.5 ? -1 : 1;
+    let rotation = random(this.minBranchAngle, this.maxBranchAngle);
+    rotation *= posOrNeg;
+    let newVelocity = p5.Vector.rotate(parentNode.velocity, rotation);
+
+    // branch start position
+    let perpendicularVelocity = createVector(parentNode.velocity.y,-parentNode.velocity.x);
+    perpendicularVelocity.setMag(parentNode.size/4); // move 1/4 parent node's size away from parent's center
+    perpendicularVelocity.mult(-posOrNeg);
+    let newPosition = p5.Vector.add(parentNode.position, perpendicularVelocity);
+    if (this.checkCollisions(newPosition)) { return; }
+
+    return new Node(newSize, newPosition, newVelocity);
+  }
+
+  draw() {
+    this.newNodes.forEach(node => {
+      node.draw(
+          this.color,
+          this.background,
+          this.shadowIntensity,
+          this.leftShadowFactor,
+          this.rightShadowFactor
+      );
+    });
+  }
+
+  checkCollisions(position) {
+    if (position.x > this.maxWidth || position.x < 0) {
+      return true;
+    } else if (position.y > this.maxHeight || position.y < 0) {
+      return true;
+    }
+    return false;
+  }
+}
 
 class Node {
-  position;
-  velocity;
-
   constructor(size, position, velocity) {
     this.size = size;
     this.position = position;
     this.velocity = velocity;
   }
 
-  draw() {
-    // get left from center given current velocity
-    let drawingVector = createVector(this.velocity.y,-this.velocity.x);
-    drawingVector.setMag(this.size/2);
-    let drawingPositionLeft = p5.Vector.add(this.position, drawingVector);
+  draw(color, background, shadowIntensity, leftShadowFactor, rightShadowFactor) {
+    // a vector perpendicular to current direction is needed to calculate left most
+    // and right most points from center
+    let perpendicularVelocity = createVector(this.velocity.y,-this.velocity.x);
+    perpendicularVelocity.setMag(this.size/2);
 
-    // get right from center given current velocity
-    drawingVector.rotate(PI);
-    let drawingPositionRight = p5.Vector.add(this.position, drawingVector);
+    // get left and right most point from center
+    let leftPosition = p5.Vector.add(this.position, perpendicularVelocity);
+    perpendicularVelocity.rotate(PI);
+    let rightPosition = p5.Vector.add(this.position, perpendicularVelocity);
 
-    // draw white background
-    stroke('white');
+    // draw a line of background to make new nodes appear in foreground
+    // a line is needed to cover up the 'shadow' points from other nodes
+    stroke(background);
     strokeWeight(1);
-    line(drawingPositionLeft.x, drawingPositionLeft.y, drawingPositionRight.x, drawingPositionRight.y);
+    line(leftPosition.x, leftPosition.y, rightPosition.x, rightPosition.y);
 
-    // tree color
-    stroke('black');
-    //colorMode(HSL, 100);
-    //stroke(80, 60, 80);
+
+    // drawing setup
+    stroke(color);
     strokeWeight(1);
 
     // draw right side
-    point(drawingPositionRight.x, drawingPositionRight.y);
-    this.addShadow(drawingVector);
-    let shadowProbability = 0.8;
-    this.addShadow(drawingVector, shadowProbability);
+    point(rightPosition.x, rightPosition.y);
+    this.addShadow(perpendicularVelocity, shadowIntensity, rightShadowFactor);
 
     // draw left side
-    drawingVector.rotate(PI);
-    point(drawingPositionLeft.x, drawingPositionLeft.y);
-    shadowProbability = 0.2;
-    this.addShadow(drawingVector, shadowProbability);
+    perpendicularVelocity.rotate(PI);
+    point(leftPosition.x, leftPosition.y);
+    this.addShadow(perpendicularVelocity, shadowIntensity, leftShadowFactor);
   }
 
-  addShadow(drawingVector, shadowProbability) {
-    for (let i = 0; i < 10; ++i) {
+  addShadow(drawingVector, shadowIntensity, shadowProbability) {
+    for (let i = 0; i < shadowIntensity; ++i) {
       if (random() < shadowProbability) {
         let shadowPoint = this.getShadowPoint(drawingVector);
         point(shadowPoint.x, shadowPoint.y);
@@ -56,86 +152,34 @@ class Node {
     }
   }
 
+  // generates a random point along the drawing vector
   getShadowPoint(drawingVector) {
     let shadowPointVector = drawingVector.copy();
+
+    // janky math for getting a random distribution that works well
     let randNum = random(0,2);
-    let randNumShifted = Math.log(randNum*500+1)/8; // my janky math for getting the distribution i like lol
+    let randNumShifted = Math.log(randNum*500+1)/8;
     let magnitude = map(randNumShifted,  0, 0.864, 0, this.size/2);
+
     shadowPointVector.setMag(magnitude);
     return p5.Vector.add(this.position, shadowPointVector);
-  }
-
-  grow() {
-    if (this.size < 1) { return; }
-    let newPosition = p5.Vector.add(this.position, this.velocity);
-    let newSize = this.size-0.035;
-    if (this.checkCollisions(newPosition)) {return;}
-    let wobbleFactor = radians(3);
-    let rotationRadians = random(-wobbleFactor, wobbleFactor);
-    let newVelocity = p5.Vector.rotate(this.velocity, rotationRadians);
-    return new Node(newSize, newPosition, newVelocity);
-  }
-
-  branch() {
-    // branch size
-    let newSize = random(this.size * 0.3, this.size * 0.8);
-
-    // branch direction
-    let rotation = random(radians(20), radians(60));
-    let sign = random() < 0.5 ? -1 : 1;
-    rotation *= sign;
-    let newVelocity = p5.Vector.rotate(this.velocity, rotation);
-
-    // branch position
-    let drawingVector = createVector(this.velocity.y,-this.velocity.x);
-    drawingVector.setMag(this.size/4);
-    drawingVector.mult(-sign);
-    let newPosition = p5.Vector.add(this.position, drawingVector);
-
-    return new Node(newSize, newPosition, newVelocity);
-  }
-
-  checkCollisions(position) {
-   if (position.x > width || position.x < 0) {
-     return true;
-   } else if (position.y > height || position.y < 0) {
-     return true;
-   }
-   return false;
   }
 }
 
 function setup() {
-  width = 400;
-  height = 400;
-  createCanvas(width, height);
-  nodes = [];
-  newNodes = [];
-  let nodeCount = 1;
-  for (let i = 0; i < nodeCount; ++i) {
-    let position = createVector(width/2, height-5);
-    let velocity = createVector(0,-0.5);
-    let size = 30;
-    let newNode = new Node(size, position, velocity);
-    nodes.push(newNode);
-    newNodes.push(newNode);
-  }
+  screenWidth = 400;
+  screenHeight = 300;
+  createCanvas(screenWidth, screenHeight);
+  let backgroundColor = 'black';
+  background(backgroundColor);
+
+  let position = createVector(width/2, height);
+  let startingSize = 30;
+  let color = 'green';
+  tree = new Tree(startingSize, position, screenWidth, screenHeight, color, backgroundColor);
 }
 
 function draw() {
-  let grownNodes = [];
-  newNodes.forEach(node => {
-    node.draw();
-    let grownNode = node.grow();
-    if (grownNode) { grownNodes.push(grownNode); }
-    if (random() < 0.0075) {
-      let branch = node.branch();
-      if (branch) { grownNodes.push(branch); }
-    }
-  });
-  newNodes = grownNodes;
-}
-
-function mousePressed() {
-  noLoop();
+  tree.draw();
+  tree.grow();
 }
